@@ -135,3 +135,70 @@ Réponds de façon claire et bienveillante en te basant sur ces extraits."""
         "confidence": confidence,
         "confidence_label": confidence_label
     }
+
+
+def analyze_critical_values(doc_name: str) -> list:
+    """
+    Interroge le document via RAG pour détecter les valeurs anormales.
+    Retourne une liste de dicts : {parametre, valeur, norme, niveau}
+    """
+    client = get_mistral_client()
+
+    count = collection.count()
+    if count == 0:
+        return []
+
+    question = f"Quelles sont toutes les valeurs anormales ou hors norme dans le document {doc_name} ?"
+
+    try:
+        context, _, _, _ = search_context(question, n_results=8)
+    except Exception:
+        return []
+
+    prompt = f"""Voici des extraits d'un document médical :
+
+{context}
+
+---
+
+Analyse ces extraits et identifie TOUTES les valeurs biologiques anormales ou hors norme.
+
+Réponds UNIQUEMENT avec un JSON valide, sans texte autour, sous ce format exact :
+[
+  {{
+    "parametre": "Nom du paramètre",
+    "valeur": "Valeur mesurée avec unité",
+    "norme": "Plage normale attendue",
+    "niveau": "critique" ou "elevé"
+  }}
+]
+
+Si aucune valeur anormale n'est détectée, réponds avec : []
+"""
+
+    response = client.chat.complete(
+        model="mistral-small-latest",
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.1
+    )
+
+    raw = response.choices[0].message.content.strip()
+
+    # Nettoyage si le modèle ajoute des balises markdown
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+
+    try:
+        import json
+        alertes = json.loads(raw)
+        if isinstance(alertes, list):
+            return alertes
+    except Exception:
+        pass
+
+    return []
