@@ -11,11 +11,16 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🏥 MediRAG — Assistant Medical Intelligent")
-st.caption("Analysez vos documents medicaux en langage naturel · Propulse par Mistral AI")
+st.title("🏥 MediRAG — Assistant Médical Intelligent")
+st.caption("Analysez vos documents médicaux en langage naturel · Propulsé par Mistral AI")
 
+# ── Initialise l'historique de conversation ──
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+# ── Sidebar : gestion des documents ──
 with st.sidebar:
-    st.header("Mes Documents Medicaux")
+    st.header("📁 Mes Documents Médicaux")
 
     uploaded = st.file_uploader(
         "Ajouter un document",
@@ -23,7 +28,7 @@ with st.sidebar:
         help="Ordonnance, analyse de sang, compte-rendu..."
     )
 
-    if uploaded and st.button("Importer", type="primary"):
+    if uploaded and st.button("📤 Importer", type="primary"):
         with st.spinner(f"Traitement de {uploaded.name}..."):
             suffix = Path(uploaded.name).suffix
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -36,50 +41,86 @@ with st.sidebar:
             if "error" in result:
                 st.error(result["error"])
             else:
-                st.success(f"{result['chunks']} sections indexees !")
+                st.success(f"✅ {result['chunks']} sections indexées !")
                 st.rerun()
 
+    # Liste des documents chargés
     docs = list_documents()
     if docs:
         st.divider()
-        st.subheader("Documents charges")
+        st.subheader("Documents chargés")
         for doc in docs:
-            st.markdown(f"- {doc}")
+            st.markdown(f"📄 {doc}")
     else:
-        st.info("Aucun document charge pour l'instant.")
+        st.info("Aucun document chargé pour l'instant.")
 
-st.subheader("Posez votre question")
+    # Bouton vider l'historique
+    if st.session_state.messages:
+        st.divider()
+        if st.button("🗑️ Vider la conversation"):
+            st.session_state.messages = []
+            st.rerun()
 
+# ── Zone principale : chat ──
+st.subheader("💬 Posez votre question")
+
+# Exemples de questions cliquables
 cols = st.columns(3)
 examples = [
     "Quelles sont mes valeurs anormales ?",
-    "Explique mon taux de creatinine",
-    "Quels medicaments sont prescrits ?"
+    "Explique mon taux de créatinine",
+    "Quels médicaments sont prescrits ?"
 ]
 for col, example in zip(cols, examples):
     if col.button(example, use_container_width=True):
-        st.session_state.question = example
+        st.session_state.question_example = example
 
-question = st.text_area(
-    "Votre question",
-    value=st.session_state.get("question", ""),
-    placeholder="Ex: Mon taux de cholesterol est-il normal ?",
-    height=80,
-    label_visibility="collapsed"
+st.divider()
+
+# Affiche l'historique de conversation
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+        if msg["role"] == "assistant" and "confidence_label" in msg:
+            st.caption(f"Confiance : {msg['confidence_label']}")
+            if msg.get("sources"):
+                st.caption(f"Sources : {', '.join(msg['sources'])}")
+
+# Zone de saisie
+question = st.chat_input(
+    "Posez votre question médicale...",
 )
 
-if st.button("Analyser", type="primary", disabled=not question.strip()):
-    with st.spinner("Analyse en cours..."):
-        result = ask(question)
+# Gère le clic sur un exemple
+if "question_example" in st.session_state:
+    question = st.session_state.pop("question_example")
 
-    st.divider()
-    st.markdown("### Reponse de MediRAG")
-    st.markdown(result["answer"])
+# Traitement de la question
+if question:
+    # Affiche la question
+    with st.chat_message("user"):
+        st.markdown(question)
+    st.session_state.messages.append({"role": "user", "content": question})
 
-    if result["sources"]:
-        st.divider()
-        st.markdown("**Sources consultees :**")
-        for src in result["sources"]:
-            st.markdown(f"- {src}")
+    # Génère la réponse
+    with st.chat_message("assistant"):
+        with st.spinner("Analyse en cours..."):
+            result = ask(question)
 
-    st.warning("Cette analyse est fournie a titre informatif uniquement. Consultez toujours un professionnel de sante.")
+        st.markdown(result["answer"])
+        st.caption(f"Confiance : {result['confidence_label']}")
+        if result["sources"]:
+            st.caption(f"Sources : {', '.join(result['sources'])}")
+
+        st.warning(
+            "⚕️ Cette analyse est fournie à titre informatif uniquement. "
+            "Consultez toujours un professionnel de santé."
+        )
+
+    # Sauvegarde dans l'historique
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": result["answer"],
+        "confidence_label": result["confidence_label"],
+        "sources": result["sources"]
+    })

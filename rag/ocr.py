@@ -1,14 +1,25 @@
 import fitz
 import base64
 from pathlib import Path
-from mistralai import Mistral
-from dotenv import load_dotenv
 import os
 
-load_dotenv()
-client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
+
+def get_mistral_client():
+    from mistralai import Mistral
+    try:
+        import streamlit as st
+        api_key = st.secrets["MISTRAL_API_KEY"]
+    except Exception:
+        from dotenv import load_dotenv
+        load_dotenv()
+        api_key = os.getenv("MISTRAL_API_KEY")
+    if not api_key:
+        raise ValueError("Clé API Mistral non trouvée. Vérifie .env ou Streamlit Secrets.")
+    return Mistral(api_key=api_key)
+
 
 def pdf_to_text(pdf_path: str) -> str:
+    client = get_mistral_client()
     doc = fitz.open(pdf_path)
     all_text = []
 
@@ -51,6 +62,8 @@ Retourne uniquement le texte extrait, sans commentaire."""
 
 
 def image_to_text(image_path: str) -> str:
+    client = get_mistral_client()
+
     with open(image_path, "rb") as f:
         img_b64 = base64.b64encode(f.read()).decode()
 

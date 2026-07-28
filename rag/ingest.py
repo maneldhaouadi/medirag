@@ -1,14 +1,25 @@
 import chromadb
 from pathlib import Path
-from mistralai import Mistral
-from dotenv import load_dotenv
 import os
 from .ocr import pdf_to_text, image_to_text
 
-load_dotenv()
-client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
 
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
+def get_mistral_client():
+    from mistralai import Mistral
+    try:
+        import streamlit as st
+        api_key = st.secrets["MISTRAL_API_KEY"]
+    except Exception:
+        from dotenv import load_dotenv
+        load_dotenv()
+        api_key = os.getenv("MISTRAL_API_KEY")
+    if not api_key:
+        raise ValueError("Clé API Mistral non trouvée. Vérifie .env ou Streamlit Secrets.")
+    return Mistral(api_key=api_key)
+
+
+# ChromaDB — /tmp fonctionne sur Streamlit Cloud ET en local
+chroma_client = chromadb.PersistentClient(path="/tmp/chroma_db")
 collection = chroma_client.get_or_create_collection(
     name="documents_medicaux",
     metadata={"hnsw:space": "cosine"}
@@ -28,6 +39,7 @@ def chunk_text(text: str, chunk_size: int = 400, overlap: int = 80) -> list:
 
 
 def get_embeddings(texts: list) -> list:
+    client = get_mistral_client()
     response = client.embeddings.create(
         model="mistral-embed",
         inputs=texts
@@ -68,7 +80,7 @@ def ingest_document(file_path: str, doc_name: str = None) -> dict:
 
     try:
         collection.delete(where={"source": doc_name})
-    except:
+    except Exception:
         pass
 
     collection.add(
@@ -78,7 +90,7 @@ def ingest_document(file_path: str, doc_name: str = None) -> dict:
         metadatas=metadatas
     )
 
-    print(f"  Document '{doc_name}' ingere avec succes !")
+    print(f"  Document '{doc_name}' ingéré avec succès !")
     return {"chunks": len(chunks), "document": doc_name}
 
 
