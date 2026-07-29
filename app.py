@@ -66,7 +66,7 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs(["💬 Chat", "📊 Analyse", "📋 Rapport PDF"])
 
 # ─────────────────────────────────────────────
-# TAB 1 — Chat
+# TAB 1 — Chat (texte + voix)
 # ─────────────────────────────────────────────
 with tab1:
     st.subheader("💬 Posez votre question")
@@ -82,21 +82,46 @@ with tab1:
         if col.button(example, use_container_width=True):
             st.session_state.question_example = example
 
+    # ── Interface vocale ──────────────────────
+    with st.expander("🎙️ Utiliser la voix", expanded=False):
+        st.caption("Enregistrez votre question — l'audio sera transcrit automatiquement.")
+
+        audio_value = st.audio_input("Enregistrer une question vocale")
+
+        if audio_value is not None:
+            audio_bytes = audio_value.read()
+            with st.spinner("Transcription en cours..."):
+                from rag.voice import transcribe_audio
+                transcribed = transcribe_audio(audio_bytes)
+
+            if transcribed:
+                st.success(f"Transcription : **{transcribed}**")
+                st.session_state.question_example = transcribed
+                st.rerun()
+            else:
+                st.warning("Transcription échouée. Réessayez ou tapez votre question.")
+
     st.divider()
 
     # Affiche l'historique de conversation
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
-            if msg["role"] == "assistant" and "confidence_label" in msg:
-                st.caption(f"Confiance : {msg['confidence_label']}")
+            if msg["role"] == "assistant":
+                if "confidence_label" in msg:
+                    st.caption(f"Confiance : {msg['confidence_label']}")
                 if msg.get("sources"):
                     st.caption(f"Sources : {', '.join(msg['sources'])}")
+                # Bouton écouter la réponse
+                if st.button("🔊 Écouter", key=f"tts_{msg['content'][:20]}"):
+                    from rag.voice import text_to_speech
+                    audio_bytes = text_to_speech(msg["content"])
+                    st.audio(audio_bytes, format="audio/mp3")
 
-    # Zone de saisie
+    # Zone de saisie texte
     question = st.chat_input("Posez votre question médicale...")
 
-    # Gère le clic sur un exemple
+    # Gère le clic sur un exemple ou une transcription vocale
     if "question_example" in st.session_state:
         question = st.session_state.pop("question_example")
 
@@ -115,6 +140,12 @@ with tab1:
             if result["sources"]:
                 st.caption(f"Sources : {', '.join(result['sources'])}")
 
+            # Synthèse vocale de la réponse
+            if st.button("🔊 Écouter la réponse", key="tts_latest"):
+                from rag.voice import text_to_speech
+                audio_bytes = text_to_speech(result["answer"])
+                st.audio(audio_bytes, format="audio/mp3")
+
             st.warning(
                 "⚕️ Cette analyse est fournie à titre informatif uniquement. "
                 "Consultez toujours un professionnel de santé."
@@ -128,7 +159,7 @@ with tab1:
         })
 
 # ─────────────────────────────────────────────
-# TAB 2 — Analyse (placeholder, à compléter)
+# TAB 2 — Analyse
 # ─────────────────────────────────────────────
 with tab2:
     st.subheader("📊 Analyse des valeurs")
