@@ -1,7 +1,6 @@
 """
 voice.py — Interface vocale pour MediRAG
-Utilise st.audio_input() (navigateur) + faster-whisper (transcription locale gratuite)
-+ gTTS (synthèse vocale). Aucune clé API requise.
+Correction : conversion webm→wav + gestion du chargement modèle + feedback utilisateur
 """
 
 import io
@@ -11,40 +10,89 @@ import streamlit as st
 from gtts import gTTS
 
 
+@st.cache_resource(show_spinner="Chargement du modèle vocal... (une seule fois)")
+def load_whisper_model():
+    """
+    Charge le modèle Whisper UNE SEULE FOIS grâce au cache Streamlit.
+    Sans ce cache, le modèle est retéléchargé à chaque question.
+    """
+    from faster_whisper import WhisperModel
+    return WhisperModel("base", device="cpu", compute_type="int8")
+
+
+def convert_to_wav(audio_bytes: bytes) -> str:
+    """
+    Convertit n'importe quel format audio (webm, ogg, mp4...)
+    en fichier WAV compatible faster-whisper.
+    Nécessite ffmpeg installé sur le système.
+    Retourne le chemin du fichier WAV temporaire.
+    """
+    import subprocess
+
+    # Sauvegarde l'audio brut dans un fichier temporaire
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp_in:
+        tmp_in.write(audio_bytes)
+        input_path = tmp_in.name
+
+    output_path = input_path.replace(".webm", ".wav")
+
+    # Conversion via ffmpeg (disponible sur Streamlit Cloud et la plupart des systèmes)
+    result = subprocess.run([
+        "ffmpeg", "-y",           # -y = écraser sans confirmation
+        "-i", input_path,         # fichier source
+        "-ar", "16000",           # 16kHz — fréquence optimale pour Whisper
+        "-ac", "1",               # mono
+        "-f", "wav",              # format WAV
+        output_path
+    ], capture_output=True)
+
+    os.unlink(input_path)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg échoué : {result.stderr.decode()}")
+
+    return output_path
+
+
 def transcribe_audio(audio_bytes: bytes) -> str:
     """
-    Transcrit un fichier audio en texte via faster-whisper (100% local, gratuit).
-    audio_bytes : contenu brut du fichier audio (wav/webm).
+    Transcrit l'audio en texte.
     Retourne la transcription ou "" en cas d'erreur.
     """
+    wav_path = None
     try:
-        from faster_whisper import WhisperModel
+        # Étape 1 — Conversion format
+        wav_path = convert_to_wav(audio_bytes)
 
-        # Charge le modèle "tiny" — léger (~75 MB), rapide, suffisant pour du médical court
-        # Options : "tiny", "base", "small" (plus précis mais plus lent)
-        model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        # Étape 2 — Chargement modèle (caché, fait une seule fois)
+        model = load_whisper_model()
 
-        # Sauvegarde l'audio dans un fichier temporaire (faster-whisper lit un fichier)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-            tmp.write(audio_bytes)
-            tmp_path = tmp.name
+        # Étape 3 — Transcription
+        segments, info = model.transcribe(
+            wav_path,
+            language="fr",
+            beam_size=3,           # compromis vitesse/précision
+            vad_filter=True,       # filtre les silences automatiquement
+        )
 
-        segments, _ = model.transcribe(tmp_path, language="fr")
-        os.unlink(tmp_path)
-
-        transcription = " ".join(segment.text for segment in segments).strip()
+        transcription = " ".join(seg.text for seg in segments).strip()
         return transcription
 
-    except Exception as e:
-        st.error(f"Erreur de transcription : {e}")
+    except FileNotFoundError:
+        st.error("❌ ffmpeg n'est pas installé. Ajoutez `packages.txt` avec `ffmpeg`.")
         return ""
+    except Exception as e:
+        st.error(f"❌ Erreur transcription : {e}")
+        return ""
+    finally:
+        if wav_path and os.path.exists(wav_path):
+            os.unlink(wav_path)
 
 
 def text_to_speech(text: str) -> bytes:
     """
-    Convertit du texte en audio MP3 via gTTS (Google Text-to-Speech).
+    Convertit du texte en audio MP3 via gTTS.
     Limite à 500 caractères pour éviter les délais trop longs.
-    Retourne les bytes MP3.
     """
     tts = gTTS(text=text[:500], lang="fr", slow=False)
     buf = io.BytesIO()
