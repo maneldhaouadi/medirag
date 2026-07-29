@@ -89,17 +89,38 @@ with tab1:
         audio_value = st.audio_input("Enregistrer une question vocale")
 
         if audio_value is not None:
-            audio_bytes = audio_value.read()
-            with st.spinner("Transcription en cours..."):
-                from rag.voice import transcribe_audio
-                transcribed = transcribe_audio(audio_bytes)
+            # ✅ FIX 1 : Utiliser un hash pour éviter de retraiter le même audio
+            # après un st.rerun() (qui recharge toute la page)
+            audio_id = id(audio_value)
+            if st.session_state.get("last_audio_id") != audio_id:
+                st.session_state["last_audio_id"] = audio_id
 
-            if transcribed:
-                st.success(f"Transcription : **{transcribed}**")
-                st.session_state.question_example = transcribed
-                st.rerun()
-            else:
-                st.warning("Transcription échouée. Réessayez ou tapez votre question.")
+                # ✅ FIX 2 : st.audio_input() retourne un objet BytesIO, PAS des bytes bruts.
+                # Il faut appeler .getvalue() ou .read() selon la version de Streamlit.
+                try:
+                    if hasattr(audio_value, "getvalue"):
+                        audio_bytes = audio_value.getvalue()
+                    elif hasattr(audio_value, "read"):
+                        audio_bytes = audio_value.read()
+                    else:
+                        audio_bytes = bytes(audio_value)
+                except Exception as e:
+                    st.error(f"❌ Impossible de lire l'audio : {e}")
+                    audio_bytes = None
+
+                if audio_bytes:
+                    with st.spinner("Transcription en cours..."):
+                        from rag.voice import transcribe_audio
+                        transcribed = transcribe_audio(audio_bytes)
+
+                    if transcribed:
+                        st.success(f"✅ Transcription : **{transcribed}**")
+                        # ✅ FIX 3 : Sauvegarder en session state AVANT st.rerun(),
+                        # sinon la valeur est perdue au rechargement de la page.
+                        st.session_state["question_example"] = transcribed
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ Transcription vide ou échouée. Réessayez ou tapez votre question.")
 
     st.divider()
 
@@ -121,7 +142,8 @@ with tab1:
     # Zone de saisie texte
     question = st.chat_input("Posez votre question médicale...")
 
-    # Gère le clic sur un exemple ou une transcription vocale
+    # ✅ FIX 4 : Gère le clic sur un exemple ou une transcription vocale
+    # On vérifie session_state en priorité, puis la saisie clavier
     if "question_example" in st.session_state:
         question = st.session_state.pop("question_example")
 
